@@ -65,6 +65,18 @@ App URL: `http://localhost:8080`
 Verified on this VM (2026-10-06): round-robin alternates across both nodes,
 and with `node-b` stopped all requests are answered by `node-a`.
 
+Two operational nuances, both confirmed by end-to-end testing:
+
+- The UI's "served by" comes from `config.js`, a *separate* upstream request
+  from the one that served `index.html`. Page loads issue several upstream
+  requests, so the displayed node can hold steady across reloads even though
+  round-robin is alternating strictly per request. Watch `X-Node-Id` or
+  `/healthz` for the authoritative picture.
+- Passive failover is not instant: when a node is stopped, requests routed
+  to it wait out the connect timeout (~3s) before `proxy_next_upstream`
+  retries the peer. Expect brief latency on the first request(s) after a
+  node dies; `max_fails` then marks it down for `fail_timeout`.
+
 ## Production topology
 
 - `deploy/docker-compose.node.yml` — runs on **each** app host; pulls the
