@@ -1,0 +1,35 @@
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+    # Identifies which active-active node served the response.
+    add_header X-Node-Id "${NODE_ID}" always;
+
+    # Health endpoint used by the load balancer demo and uptime checks.
+    location = /healthz {
+        default_type text/plain;
+        return 200 "${NODE_ID}\n";
+    }
+
+    # Hashed build assets — safe to cache forever.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        add_header X-Node-Id "${NODE_ID}" always;
+        try_files $uri =404;
+    }
+
+    # SPA fallback — every other route serves index.html.
+    location / {
+        add_header Cache-Control "no-cache";
+        add_header X-Node-Id "${NODE_ID}" always;
+        try_files $uri $uri/ /index.html;
+    }
+}

@@ -1,0 +1,35 @@
+# Self-hosted Jenkins for the CI/CD pipeline (Jenkinsfile).
+# Joins the app compose network so health checks hit http://lb and http://node-*.
+#
+# Path trick: JENKINS_HOME and the repo are bind-mounted at the SAME absolute
+# paths as on the docker host, so `docker` commands and docker-workflow agent
+# mounts issued through /var/run/docker.sock resolve host paths correctly.
+
+services:
+  jenkins:
+    build: ./jenkins
+    environment:
+      JENKINS_HOME: /home/ubuntu/jenkins_home
+      # ALLOW_LOCAL_CHECKOUT is only for the file:///repo-src simulation remote;
+      # drop it when the job points at a real git host.
+      JAVA_OPTS: -Djenkins.install.runSetupWizard=false -Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true
+      CASC_JENKINS_CONFIG: /var/jenkins_casc/casc.yaml
+      GIT_BRANCH: ${GIT_BRANCH:-main}
+    group_add:
+      # must equal the host's docker group id (`stat -c %g /var/run/docker.sock`)
+      - "${DOCKER_GID:-998}"
+    ports:
+      - "8090:8080"
+    volumes:
+      - /home/ubuntu/jenkins_home:/home/ubuntu/jenkins_home
+      - /home/ubuntu/repos/nginx-react-app:/home/ubuntu/repos/nginx-react-app
+      - /home/ubuntu/repos/nginx-react-app:/repo-src:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./jenkins/casc.yaml:/var/jenkins_casc/casc.yaml:ro
+    networks:
+      - appnet
+
+networks:
+  appnet:
+    external: true
+    name: nginx-react-app_default
