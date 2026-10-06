@@ -1,4 +1,4 @@
-# Deployment — nginx + React 18, active-active
+# Deployment — nginx + React 19, active-active
 
 Reference: [DigitalOcean — Deploy a React Application with Nginx on Ubuntu](https://www.digitalocean.com/community/tutorials/deploy-react-application-with-nginx-on-ubuntu).
 This doc adapts that tutorial in three ways: the app is built with **Vite**
@@ -12,9 +12,9 @@ are the same.
 
 | Component | Version |
 |---|---|
-| React / react-dom | 18.3.x |
+| React / react-dom | 19.3.x |
 | Vite | 5.4.x |
-| nginx | 1.30.5 (alpine image) |
+| nginx | 1.31.6 (alpine image) |
 | Node (build) | 20 |
 
 ## Architecture
@@ -25,12 +25,12 @@ are the same.
                      └──────┬───────┘
                             │ :80
                      ┌──────▼───────┐
-                     │      lb      │  nginx 1.30, round-robin upstream
+                     │      lb      │  nginx 1.31, round-robin upstream
                      │  (lb.conf)   │  passive failover via max_fails
                      └──┬───────┬───┘
              ┌──────────▼─┐   ┌─▼──────────┐
              │   node-a   │   │   node-b   │  identical images, both active
-             │ nginx 1.30 │   │ nginx 1.30 │  serve the same React build
+             │ nginx 1.31 │   │ nginx 1.31 │  serve the same React build
              └────────────┘   └────────────┘
 ```
 
@@ -176,7 +176,7 @@ IMAGE_TAG=<previous-sha> NODE_ID=node-a \
 ## Repo layout
 
 ```
-app/                        Vite + React 18 source
+app/                        Vite + React 19 source
 nginx/templates/            per-node server block (envsubst template)
 nginx/lb.conf               LB upstream + proxy config (simulation)
 deploy/                     production compose files + LB template
@@ -185,6 +185,6 @@ scripts/deploy-node.sh      per-host deploy step invoked by Jenkins (ssh mode)
 jenkins/                    Jenkins image (plugins, docker CLI) + JCasC config
 docker-compose.jenkins.yml  self-hosted Jenkins for the pipeline
 Jenkinsfile                 CI/CD pipeline (declarative)
-Dockerfile                  node:20 build → nginx:1.30.5-alpine serve
+Dockerfile                  node:20 build → nginx:1.31.6-alpine serve
 docker-compose.yml          single-VM active-active simulation
 ```

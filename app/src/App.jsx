@@ -15,7 +15,7 @@ export default function App() {
 
   return (
     <main className="page">
-      <h1>nginx + React 18 — active-active</h1>
+      <h1>nginx + React 19 — active-active</h1>
       <p>
         This page was served by <strong data-testid="node-id">{nodeId}</strong>
       </p>
