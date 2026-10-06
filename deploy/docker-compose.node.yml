@@ -1,0 +1,11 @@
+# Runs on EACH app-node host in production.
+# The image is built by CI and pulled from GHCR; set NODE_ID per host.
+
+services:
+  app:
+    image: ghcr.io/dianwinata88/nginx-react-app:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ID: ${NODE_ID:?set NODE_ID, e.g. node-a}
+    ports:
+      - "80:80"

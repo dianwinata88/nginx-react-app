@@ -1,0 +1,16 @@
+# Runs on the load-balancer host in production.
+# NODE_A_HOST / NODE_B_HOST are substituted into lb.conf by envsubst
+# (image runs templates through /etc/nginx/templates/).
+
+services:
+  lb:
+    image: nginx:1.30.5-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./lb.conf.template:/etc/nginx/templates/lb.conf.template:ro
+    environment:
+      NODE_A_HOST: ${NODE_A_HOST:?set NODE_A_HOST}
+      NODE_B_HOST: ${NODE_B_HOST:?set NODE_B_HOST}
