@@ -1,11 +1,12 @@
 # Deployment — nginx + React 18, active-active
 
 Reference: [DigitalOcean — Deploy a React Application with Nginx on Ubuntu](https://www.digitalocean.com/community/tutorials/deploy-react-application-with-nginx-on-ubuntu).
-This doc adapts that tutorial in two ways: the app is built with **Vite**
-(Create React App is deprecated) and deployment is **containerised** —
+This doc adapts that tutorial in three ways: the app is built with **Vite**
+(Create React App is deprecated), deployment is **containerised** —
 Docker images + `docker compose` instead of `rsync` of `build/` into
-`/var/www`. The nginx concepts (server blocks, gzip, caching, SPA fallback,
-CI/CD via GitHub Actions) are the same.
+`/var/www` — and CI/CD runs on self-hosted **Jenkins** instead of GitHub
+Actions. The nginx concepts (server blocks, gzip, caching, SPA fallback)
+are the same.
 
 ## Stack
 
@@ -89,30 +90,78 @@ Two operational nuances, both confirmed by end-to-end testing:
 - Put a TLS terminator in front of the LB (or add certbot to the LB host)
   for HTTPS — see the DigitalOcean tutorial's SSL step.
 
-## CI/CD
+## CI/CD — Jenkins
 
-`.github/workflows/deploy.yml` (mirrors step 8 of the tutorial, adapted):
+The pipeline is a declarative `Jenkinsfile` at the repo root (mirrors step 8
+of the tutorial, adapted). Stages:
 
-1. **test-and-build** — `npm ci`, `npm test`, `npm run build` (Node 20).
-2. **image** — builds the Dockerfile and pushes
-   `ghcr.io/dianwinata88/nginx-react-app:{sha}` and `:latest` to GHCR.
-3. **deploy-node-a → deploy-node-b** — *rolling*: SSH to each host and run
-   `scripts/deploy-node.sh`, which pulls the new image, restarts the
-   container, and health-checks `/healthz` before the pipeline moves on.
-   Node B only deploys after node A is healthy — the peer node absorbs all
-   traffic during each restart, so users never see downtime.
-4. **verify** — hits `http://<LB_HOST>/healthz` and expects answers from
-   both nodes.
+1. **Checkout** — clone the repo into the job workspace.
+2. **Test & Build** — inside a `node:20-alpine` agent container:
+   `npm ci`, `npm test`, `npm run build`.
+3. **Docker image** — `docker build` → `ghcr.io/dianwinata88/nginx-react-app:<tag>`.
+4. **Push image** — optional (`PUSH_IMAGE`), pushes to GHCR with the
+   `ghcr-creds` credential.
+5. **Deploy node A → Deploy node B** — *rolling*: deploys one node, waits
+   for `/healthz`, then the other; the peer absorbs traffic so there is no
+   downtime. Two modes via the `DEPLOY_MODE` parameter:
+   - `ssh` (production) — SSH to `NODE_A_HOST` / `NODE_B_HOST` and run
+     `scripts/deploy-node.sh` (uses the `deploy-ssh-key` credential).
+   - `compose-local` (simulation) — `docker compose up -d --force-recreate
+     <node>` on the Jenkins host's docker, for the single-VM setup below.
+6. **Verify** — curls the load balancer's `/healthz` and expects answers
+   from both nodes.
 
-### Required repo settings
+### Running Jenkins locally (this VM)
 
-| Type | Name | Purpose |
+`docker-compose.jenkins.yml` starts a pre-configured Jenkins
+(`jenkins/Dockerfile` + `jenkins/casc.yaml`):
+
+```bash
+docker compose -f docker-compose.jenkins.yml up -d --build
+# open http://localhost:8090 — login admin / admin
+# run job "nginx-react-app" with defaults (DEPLOY_MODE=compose-local)
+```
+
+It comes with: the setup wizard disabled, an `admin` user, a seeded
+`nginx-react-app` pipeline job (Pipeline-from-SCM pointing at `/repo-src`,
+a read-only bind-mount of this checkout — switch it to the GitHub URL for
+production), the plugins the pipeline needs (workflow-aggregator, git,
+docker-workflow, ssh-agent, credentials-binding, configuration-as-code,
+job-dsl, github), and the docker CLI + compose plugin driving the host
+daemon via `/var/run/docker.sock`.
+
+Two host-parity tricks make docker work from inside the container:
+`JENKINS_HOME` and this repo are bind-mounted at the **same absolute paths**
+as on the host (so agent workspace mounts and compose relative volumes
+resolve), and `group_add` adds the host's docker gid (`DOCKER_GID`, default
+998 — check `stat -c %g /var/run/docker.sock`).
+
+Set `GIT_BRANCH` when starting to pick the ref the seed job builds
+(default `main`; this session ran it on the feature branch).
+
+Verified on this VM (2026-10-06): build #2 ran all stages green — tests
+passed, image built, node-a then node-b redeployed, and the LB's `/healthz`
+alternated `node-b/node-a` after the rolling deploy.
+
+### Production Jenkins
+
+- Any Jenkins LTS with the same plugin list; create a *Pipeline* job →
+  *Pipeline script from SCM* → the GitHub repo URL, script path
+  `Jenkinsfile`.
+- Trigger on push: GitHub repo webhook → `http://<jenkins>/github-webhook/`
+  (github plugin is already installed by the image).
+- Drop `-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true` — it exists
+  only for the `file:///repo-src` simulation remote.
+
+### Jenkins credentials to configure
+
+| ID | Type | Purpose |
 |---|---|---|
-| secret | `DEPLOY_SSH_KEY` | private key for the deploy user on both node hosts |
-| secret | `GHCR_READ_TOKEN` | token that can `docker pull` the image on the hosts (omit if the package is public) |
-| variable | `DEPLOY_USER` | SSH user on the node hosts |
-| variable | `NODE_A_HOST` / `NODE_B_HOST` | app host addresses |
-| variable | `LB_HOST` | load balancer address for post-deploy verification |
+| `deploy-ssh-key` | SSH Username with private key | `sshagent` in ssh deploy mode |
+| `ghcr-creds` | Username with password | `docker login ghcr.io` for `PUSH_IMAGE` |
+
+Job parameters (`DEPLOY_MODE`, `PUSH_IMAGE`, `IMAGE_TAG`, `DEPLOY_USER`,
+`NODE_A_HOST`, `NODE_B_HOST`, `LB_HOST`) are defined in the Jenkinsfile.
 
 ## Rollback
 
@@ -132,8 +181,10 @@ nginx/templates/            per-node server block (envsubst template)
 nginx/lb.conf               LB upstream + proxy config (simulation)
 deploy/                     production compose files + LB template
 docker/write-config.sh      entrypoint: writes config.js with NODE_ID
-scripts/deploy-node.sh      per-host deploy step invoked by CI
-.github/workflows/deploy.yml
+scripts/deploy-node.sh      per-host deploy step invoked by Jenkins (ssh mode)
+jenkins/                    Jenkins image (plugins, docker CLI) + JCasC config
+docker-compose.jenkins.yml  self-hosted Jenkins for the pipeline
+Jenkinsfile                 CI/CD pipeline (declarative)
 Dockerfile                  node:20 build → nginx:1.30.5-alpine serve
 docker-compose.yml          single-VM active-active simulation
 ```
