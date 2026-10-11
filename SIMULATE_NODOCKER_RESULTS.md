@@ -159,3 +159,14 @@ Verify: 4x /healthz via :9090 alternates node-a/node-b ; version.txt -> v2
 | Per-host nginx upgrade | pass — pid exe readlink shows 1.31.5 → 1.31.6 on both hosts |
 | Per-host react upgrade | pass — version.txt `v2 react-19 nginx-1.31.6` on :9091 and :9092 |
 | No downtime via LB | pass — LB kept alternating onto the peer during each stop |
+
+### Re-run — build #7 (before-state nginx 1.30.5)
+
+Same pipeline re-run with the hosts seeded on **nginx 1.30.5** (stable-pool
+deb: `apt`/`dpkg -x` from `nginx.org/packages/ubuntu/pool` — the mainline
+pool no longer carries 1.30.x) + React 18. Build #7: **SUCCESS** (18 s).
+
+Per host: running binary `nginx-1.30.5` → drain → rsync → `nginx-1.31.6`
+(console `readlink` shows each swap); version.txt
+`v1 react-18 nginx-1.30.5` → `v2 react-19 nginx-1.31.6`; `/healthz` via
+:9090 alternates before and after; page renders React 18 → React 19.
