@@ -1,0 +1,23 @@
+upstream react_app {
+    server ${NODE_A_HOST}:80 max_fails=2 fail_timeout=10s;
+    server ${NODE_B_HOST}:80 max_fails=2 fail_timeout=10s;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    location = /lb-status {
+        default_type application/json;
+        return 200 '{"lb":"up"}\n';
+    }
+
+    location / {
+        proxy_pass http://react_app;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+        proxy_next_upstream_tries 2;
+    }
+}

@@ -1,0 +1,32 @@
+jenkins:
+  systemMessage: "nginx-react-app CI/CD (local simulation)"
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: admin
+          password: admin
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+# Seed job: pipeline from the repo's Jenkinsfile.
+# Local simulation clones the on-disk checkout (file://); for production point
+# the URL at https://github.com/dianwinata88/nginx-react-app and add a
+# GitHub webhook -> http://<jenkins>/github-webhook/ instead.
+jobs:
+  - script: >
+      pipelineJob('nginx-react-app') {
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote { url('/repo-src') }
+                branch('${GIT_BRANCH}')
+              }
+            }
+            scriptPath('Jenkinsfile')
+            lightweight(true)
+          }
+        }
+      }
