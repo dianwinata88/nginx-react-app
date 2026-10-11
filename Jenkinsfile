@@ -128,17 +128,18 @@ def deployNode(String node) {
         }
         sh "for i in \$(seq 30); do curl -fs http://${host}/healthz && exit 0; sleep 2; done; exit 1"
     } else if (params.DEPLOY_MODE == 'native-hosts') {
-        def dir  = "${SIM_DIR}/${node}"
-        def port = (node == 'node-a') ? '9091' : '9092'
-        def ssh  = "ssh -i ${SIM_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SIM_USER}@${SIM_HOST}"
+        def dir     = "${SIM_DIR}/${node}"
+        def port    = (node == 'node-a') ? '9091' : '9092'
+        def sshOpts = "-i ${SIM_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        def sshCmd  = "ssh ${sshOpts} ${SIM_USER}@${SIM_HOST}"
         sh """
-            ${ssh} 'readlink /proc/\$(cat ${dir}/logs/nginx.pid)/exe 2>/dev/null || echo "no running nginx"'
-            ${ssh} 'test -f ${dir}/logs/nginx.pid && kill -QUIT \$(cat ${dir}/logs/nginx.pid); sleep 1'
-            rsync -az --delete -e '${ssh}' ${WORKSPACE}/app/dist/ ${SIM_USER}@${SIM_HOST}:${dir}/html/
-            ${ssh} 'printf "window.__NODE_ID__=\\"${node}\\";" > ${dir}/html/config.js'
-            ${ssh} 'echo "v2 react-19 nginx-1.31.6" > ${dir}/html/version.txt'
-            ${ssh} '${NGINX_BIN} -v 2>&1 && ${NGINX_BIN} -p ${dir} -c conf/nginx.conf'
-            ${ssh} 'readlink /proc/\$(cat ${dir}/logs/nginx.pid)/exe'
+            ${sshCmd} 'readlink /proc/\$(cat ${dir}/logs/nginx.pid)/exe 2>/dev/null || echo "no running nginx"'
+            ${sshCmd} 'test -f ${dir}/logs/nginx.pid && kill -QUIT \$(cat ${dir}/logs/nginx.pid); sleep 1'
+            rsync -az --delete -e 'ssh ${sshOpts}' ${WORKSPACE}/app/dist/ ${SIM_USER}@${SIM_HOST}:${dir}/html/
+            ${sshCmd} 'printf "window.__NODE_ID__=\\"${node}\\";" > ${dir}/html/config.js'
+            ${sshCmd} 'echo "v2 react-19 nginx-1.31.6" > ${dir}/html/version.txt'
+            ${sshCmd} '${NGINX_BIN} -v 2>&1 && ${NGINX_BIN} -p ${dir} -c conf/nginx.conf'
+            ${sshCmd} 'readlink /proc/\$(cat ${dir}/logs/nginx.pid)/exe'
         """
         sh "for i in \$(seq 30); do curl -fs http://${SIM_HOST}:${port}/healthz && exit 0; sleep 2; done; exit 1"
     } else {
