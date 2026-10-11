@@ -110,3 +110,52 @@ active-active", served by node-b, `/healthz` answered by node-a.
 - Static docroot swaps need no `nginx -s reload` — files are read per
   request; stopping/starting the process is only to simulate host
   maintenance.
+
+---
+
+## Jenkins-driven run — build #6 (DEPLOY_MODE=native-hosts)
+
+The same upgrade, executed by the Jenkins pipeline instead of by hand.
+The Jenkins container SSHes to each host (`ubuntu@host.docker.internal`,
+key `~/.ssh/sim_deploy_key`), drains the old nginx via `kill -QUIT` on the
+host's `nginx.pid`, rsyncs the freshly-built `app/dist`, then starts the
+host's `nginx-1.31.6` binary and health-checks the host port — node A,
+then node B, exactly like production `ssh` mode.
+
+Setup prerequisites (one-time, on the docker host):
+
+```bash
+# per-host nginx binaries (old + new) from nginx.org debs
+apt download nginx=1.31.5-1~jammy nginx=1.31.6-1~jammy
+dpkg -x nginx_1.31.5-1~jammy_amd64.deb ~/nodocker-sim/nginx-1.31.5
+dpkg -x nginx_1.31.6-1~jammy_amd64.deb ~/nodocker-sim/nginx-1.31.6
+
+# let Jenkins SSH to the hosts (this VM: host.docker.internal = the host)
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/sim_deploy_key
+cat ~/.ssh/sim_deploy_key.pub >> ~/.ssh/authorized_keys
+# docker-compose.jenkins.yml mounts ~/.ssh -> /keys:ro and adds
+# extra_hosts: host.docker.internal:host-gateway
+```
+
+Build #6 result: **SUCCESS** (22 s). Console evidence per host —
+
+```
+Deploy node A:
+  readlink /proc/$(cat node-a/nginx.pid)/exe  -> .../nginx-1.31.5/usr/sbin/nginx
+  kill -QUIT $(cat node-a/nginx.pid); drain wait (pidfile removed)
+  rsync app/dist -> node-a/html/ ; config.js + version.txt written
+  nginx version: nginx/1.31.6 ; start -p node-a
+  readlink /proc/$(cat node-a/nginx.pid)/exe  -> .../nginx-1.31.6/usr/sbin/nginx
+  curl http://host.docker.internal:9091/healthz -> ok
+
+Deploy node B: identical sequence on :9092
+
+Verify: 4x /healthz via :9090 alternates node-a/node-b ; version.txt -> v2
+```
+
+| Check | Result |
+|---|---|
+| Jenkins rolling upgrade, host-by-host | pass — each stage drained, deployed, restarted, health-checked its host |
+| Per-host nginx upgrade | pass — pid exe readlink shows 1.31.5 → 1.31.6 on both hosts |
+| Per-host react upgrade | pass — version.txt `v2 react-19 nginx-1.31.6` on :9091 and :9092 |
+| No downtime via LB | pass — LB kept alternating onto the peer during each stop |

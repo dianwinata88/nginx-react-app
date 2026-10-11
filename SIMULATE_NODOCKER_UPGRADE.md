@@ -199,3 +199,33 @@ LB keeps the site up on the peer throughout.
 | `~/nodocker-sim/lb` port 9090 | LB host, upstream `<ip-a>:80`, `<ip-b>:80` |
 | local `rsync` | `rsync -az --delete dist/ user@host:/opt/nginx-react-app/html/` |
 | `nginx -p <prefix>` | systemd `nginx` unit on each host |
+
+## Alternative — let Jenkins drive steps 6-7 (`DEPLOY_MODE=native-hosts`)
+
+Instead of running the rolling upgrade by hand, the pipeline's
+`native-hosts` mode performs the same sequence over SSH per host —
+evidence lands in the build console. One-time prerequisites:
+
+- Extracted nginx binaries under `~/nodocker-sim/nginx-<ver>/` (the
+  pipeline starts the version named by `NGINX_BIN` in the Jenkinsfile).
+- Deploy key `~/.ssh/sim_deploy_key` in the host's `authorized_keys`;
+  `docker-compose.jenkins.yml` mounts `~/.ssh` at `/keys:ro` and adds
+  `extra_hosts: host.docker.internal:host-gateway` so the Jenkins
+  container can ssh/curl the docker host.
+- Hosts running under `~/nodocker-sim/node-{a,b}` with `nginx.pid` at the
+  prefix root (this repo's node confs write it there).
+
+Then run the job with `DEPLOY_MODE=native-hosts` — it does, per host
+(A then B): `kill -QUIT` on the host pidfile + drain wait, rsync
+`app/dist/` over SSH, write `config.js`/`version.txt`, start
+`NGINX_BIN -p <host dir>`, poll `http://host.docker.internal:<port>/healthz`,
+and finally verifies through `http://host.docker.internal:9090`.
+
+For real hosts the flow is identical — only `SIM_HOST`, ports, and the
+paths change (or use `DEPLOY_MODE=ssh`, which runs
+`scripts/deploy-node.sh` on `NODE_A_HOST`/`NODE_B_HOST`).
+
+Rollback under this mode: flip `NGINX_BIN` to the previous version's
+binary and rsync the previous `dist` back — same steps reversed; or
+re-seed v1 and rerun the pipeline. See the run log in
+`SIMULATE_NODOCKER_RESULTS.md` (build #6).
