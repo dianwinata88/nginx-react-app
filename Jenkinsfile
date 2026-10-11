@@ -133,13 +133,13 @@ def deployNode(String node) {
         def sshOpts = "-i ${SIM_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         def sshCmd  = "ssh ${sshOpts} ${SIM_USER}@${SIM_HOST}"
         sh """
-            ${sshCmd} 'readlink /proc/\$(cat ${dir}/logs/nginx.pid)/exe 2>/dev/null || echo "no running nginx"'
-            ${sshCmd} 'test -f ${dir}/logs/nginx.pid && kill -QUIT \$(cat ${dir}/logs/nginx.pid); sleep 1'
+            ${sshCmd} 'readlink /proc/\$(cat ${dir}/nginx.pid)/exe 2>/dev/null || echo "no running nginx"'
+            ${sshCmd} 'test -f ${dir}/nginx.pid && kill -QUIT \$(cat ${dir}/nginx.pid); for i in \$(seq 20); do test -f ${dir}/nginx.pid || break; sleep 1; done; if test -f ${dir}/nginx.pid; then echo "drain timeout"; exit 1; fi'
             rsync -az --delete -e 'ssh ${sshOpts}' ${WORKSPACE}/app/dist/ ${SIM_USER}@${SIM_HOST}:${dir}/html/
             ${sshCmd} 'printf "window.__NODE_ID__=\\"${node}\\";" > ${dir}/html/config.js'
             ${sshCmd} 'echo "v2 react-19 nginx-1.31.6" > ${dir}/html/version.txt'
             ${sshCmd} '${NGINX_BIN} -v 2>&1 && ${NGINX_BIN} -p ${dir} -c conf/nginx.conf'
-            ${sshCmd} 'readlink /proc/\$(cat ${dir}/logs/nginx.pid)/exe'
+            ${sshCmd} 'readlink /proc/\$(cat ${dir}/nginx.pid)/exe'
         """
         sh "for i in \$(seq 30); do curl -fs http://${SIM_HOST}:${port}/healthz && exit 0; sleep 2; done; exit 1"
     } else {
