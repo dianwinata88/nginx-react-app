@@ -4,7 +4,7 @@ USER root
 
 # docker CLI + compose plugin (control the host daemon via mounted socket) + curl for health checks
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends curl ca-certificates openssh-client rsync \
     && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz \
        | tar xz --strip-components=1 -C /usr/local/bin docker/docker \
     && mkdir -p /usr/local/lib/docker/cli-plugins \

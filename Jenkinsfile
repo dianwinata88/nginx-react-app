@@ -1,5 +1,7 @@
 // Active-active deploy pipeline: checkout -> test/build -> image -> rolling deploy A then B -> verify.
-// Two deploy modes:
+// Three deploy modes:
+//   native-hosts  — simulate two VM hosts on this machine, reached over SSH exactly
+//                   like production: stop the host's nginx, rsync the build, restart it.
 //   compose-local — simulate on the Jenkins host's docker (docker compose up per node)
 //   ssh           — production: SSH to each node host and run scripts/deploy-node.sh
 pipeline {
@@ -8,8 +10,8 @@ pipeline {
     parameters {
         choice(
             name: 'DEPLOY_MODE',
-            choices: ['compose-local', 'ssh'],
-            description: 'compose-local simulates on this docker host; ssh deploys to production nodes'
+            choices: ['native-hosts', 'compose-local', 'ssh'],
+            description: 'native-hosts simulates two VM hosts over SSH; compose-local simulates on docker; ssh deploys to production nodes'
         )
         booleanParam(
             name: 'PUSH_IMAGE',
@@ -29,6 +31,13 @@ pipeline {
         // Jenkins container and on the docker host (bind-mounted there by
         // docker-compose.jenkins.yml) so relative compose volume mounts resolve.
         REPO_DIR = '/home/ubuntu/repos/nginx-react-app'
+        // native-hosts mode: the two "VM hosts" live on the docker host itself,
+        // reached over SSH (host.docker.internal -> host gateway in compose).
+        SIM_USER  = 'ubuntu'
+        SIM_HOST  = 'host.docker.internal'
+        SIM_KEY   = '/keys/sim_deploy_key'
+        SIM_DIR   = '/home/ubuntu/nodocker-sim'
+        NGINX_BIN = '/home/ubuntu/nodocker-sim/nginx-1.31.6/usr/sbin/nginx'
     }
 
     stages {
@@ -93,6 +102,9 @@ pipeline {
                 script {
                     if (params.DEPLOY_MODE == 'ssh') {
                         sh "for i in 1 2 3 4; do curl -fsS http://${params.LB_HOST}/healthz; sleep 1; done"
+                    } else if (params.DEPLOY_MODE == 'native-hosts') {
+                        sh 'for i in 1 2 3 4; do curl -fsS http://host.docker.internal:9090/healthz; sleep 1; done'
+                        sh 'curl -fsS http://host.docker.internal:9090/version.txt'
                     } else {
                         // Jenkins container shares the app compose network.
                         sh 'for i in 1 2 3 4; do curl -fsS http://lb/healthz; sleep 1; done'
@@ -115,6 +127,20 @@ def deployNode(String node) {
             """
         }
         sh "for i in \$(seq 30); do curl -fs http://${host}/healthz && exit 0; sleep 2; done; exit 1"
+    } else if (params.DEPLOY_MODE == 'native-hosts') {
+        def dir  = "${SIM_DIR}/${node}"
+        def port = (node == 'node-a') ? '9091' : '9092'
+        def ssh  = "ssh -i ${SIM_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${SIM_USER}@${SIM_HOST}"
+        sh """
+            ${ssh} 'readlink /proc/\$(cat ${dir}/logs/nginx.pid)/exe 2>/dev/null || echo "no running nginx"'
+            ${ssh} 'test -f ${dir}/logs/nginx.pid && kill -QUIT \$(cat ${dir}/logs/nginx.pid); sleep 1'
+            rsync -az --delete -e '${ssh}' ${WORKSPACE}/app/dist/ ${SIM_USER}@${SIM_HOST}:${dir}/html/
+            ${ssh} 'printf "window.__NODE_ID__=\\"${node}\\";" > ${dir}/html/config.js'
+            ${ssh} 'echo "v2 react-19 nginx-1.31.6" > ${dir}/html/version.txt'
+            ${ssh} '${NGINX_BIN} -v 2>&1 && ${NGINX_BIN} -p ${dir} -c conf/nginx.conf'
+            ${ssh} 'readlink /proc/\$(cat ${dir}/logs/nginx.pid)/exe'
+        """
+        sh "for i in \$(seq 30); do curl -fs http://${SIM_HOST}:${port}/healthz && exit 0; sleep 2; done; exit 1"
     } else {
         sh "cd ${REPO_DIR} && docker compose up -d --no-deps --force-recreate ${node}"
         sh "for i in \$(seq 30); do curl -fs http://${node}/healthz && exit 0; sleep 2; done; exit 1"
